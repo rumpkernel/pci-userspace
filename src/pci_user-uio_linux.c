@@ -254,6 +254,11 @@ rumpcomp_pci_irq_establish(unsigned cookie, int (*handler)(void *), void *data)
 	return irq;
 }
 
+/*
+ * Allocate physically contiguous memory.  We could be slightly more
+ * efficient here and implement an allocator on top of the
+ * hugepages to ensure that they get used more efficiently.  TODO4u
+ */
 int
 rumpcomp_pci_dmalloc(size_t size, size_t align,
 	unsigned long *pap, unsigned long *vap)
@@ -263,8 +268,9 @@ rumpcomp_pci_dmalloc(size_t size, size_t align,
 	int mmapflags, sverr;
 
 	mmapflags = MAP_ANON|MAP_PRIVATE;
-	if (size > pagesize || align > pagesize)
+	if (size > pagesize || align > pagesize) {
 		mmapflags |= MAP_HUGETLB;
+	}
 
 	v = mmap(NULL, size, PROT_READ|PROT_WRITE, mmapflags, 0, 0);
 	if (v == MAP_FAILED)
