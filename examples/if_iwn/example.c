@@ -9,9 +9,16 @@
 
 #include <rump/rump.h>
 
+/* now, obviously you need the right firmware file for _your_ device */
+#define FIRMWARE "./iwlwifi-5000-2.ucode"
+
 int
 main()
 {
+	struct stat sb;
+
+	if (stat(FIRMWARE, &sb) == -1)
+		err(1, "need firmware file %s", FIRMWARE);
 
 	/* make sure we see dmesg */
 	setenv("RUMP_VERBOSE", "1", 1);
@@ -27,7 +34,7 @@ main()
 	 */
 	if (rump_pub_etfs_register(
 	    "/libdata/firmware/if_iwn/iwlwifi-5000-2.ucode",
-	    "./iwlwifi-5000-2.ucode", RUMP_ETFS_REG) != 0)
+	    FIRMWARE, RUMP_ETFS_REG) != 0)
 			err(1, "etfs");
 
 	/* make sure old control suckets are not there */
