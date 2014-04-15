@@ -1,24 +1,12 @@
 PROG=	example
 NOMAN=	man, no man
 
-#
-# components we need
-#
-
 # wireless
 LDADD+=	-lrumpdev_pci_if_iwn -lrumpnet_net80211
 
-# PCI device access
-LDADD+= -lrumpdev_pci -lrumpdev
+# wpa_supplicant reads /dev/urandom
+LDADD+=	-lrumpdev_rnd
 
-# networking stack
-LDADD+=	-lrumpnet_netinet6 -lrumpnet_netinet -lrumpnet_net -lrumpnet
-
-# wpa_supplicant uses bpf
-LDADD+=	-lrumpdev_bpf 
-
-LDADD+=	-lrumpvfs -lrump
-
-CPPFLAGS+= -I${.CURDIR}/../common
+.include "${.CURDIR}/../Makefile.inc"
 
 .include <bsd.prog.mk>
