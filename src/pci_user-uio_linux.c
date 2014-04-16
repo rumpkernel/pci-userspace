@@ -122,9 +122,10 @@ rumpcomp_pci_confread(unsigned bus, unsigned dev, unsigned fun,
 {
 	int fd;
 
-	assert(bus == 0 && fun == 0);
-
 	*rv = 0xffffffff;
+	if (fun != 0 || bus != 0)
+		return 1;
+
 	if ((fd = openconf(dev, O_RDONLY)) == -1)
 		return 1;
 	if (pread(fd, rv, sizeof(*rv), reg) != 4)
