@@ -320,7 +320,7 @@ rumpcomp_pci_virt_to_mach(void *virt)
 	int pagesize, offset;
 	int fd;
 
-	assert(virt);
+	(void)*(volatile int *)virt;
 	pagesize = getpagesize();
 	assert((pagesize & (pagesize-1)) == 0);
 
