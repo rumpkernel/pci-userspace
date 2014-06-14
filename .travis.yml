@@ -3,8 +3,8 @@ language: c
 script:
   - git submodule update --init
   - ./buildrump.sh/buildrump.sh -T rumptools -s rumpsrc -V NOSTATICLIB=1 -qq -j16 checkout fullbuild
-  - (cd src-linux-uio ; ../rumptools/rumpmake dependall && ../rumptools/rumpmake install)
-  - (cd examples ; ../rumptools/rumpmake dependall)
+  - (cd src-linux-uio ; ../rumptools/rumpmake -j16 dependall && ../rumptools/rumpmake install)
+  - (cd examples ; ../rumptools/rumpmake -j16 dependall)
 
 notifications:
   irc:
