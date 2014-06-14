@@ -1,7 +1,7 @@
 #include <sys/stat.h>
 
 /* now, obviously you need the right firmware file for _your_ device */
-#define FIRMWARE "./iwlwifi-5000-2.ucode"
+#define FIRMWARE "iwlwifi-5000-2.ucode"
 
 #define CTRLSOCK "/tmp/iwnsock"
 #define CTRLURL "unix://" CTRLSOCK
@@ -9,6 +9,14 @@
 #include "common.c"
 
 #define WPA_ETFS "/wpa-etfs.conf"
+
+static struct rump_boot_etfs eb = {
+	.eb_key = "/libdata/firmware/if_iwm/" FIRMWARE,
+	.eb_hostpath = "./" FIRMWARE,
+	.eb_type = RUMP_ETFS_REG,
+	.eb_begin = 0,
+	.eb_size = RUMP_ETFS_SIZE_ENDOFF,
+};
 
 int
 main()
@@ -18,19 +26,9 @@ main()
 
 	if (stat(FIRMWARE, &sb) == -1)
 		err(1, "need firmware file %s", FIRMWARE);
+	rump_boot_etfs_register(&eb);
 
 	common_bootstrap();
-
-	/*
-	 * The iwn driver needs to load a firmware before anything
-	 * can happen with the device.  We assume that the user will
-	 * copy the correct file into this directory, and we will
-	 * expose it under the firmware directory to the rump kernel.
-	 */
-	if (rump_pub_etfs_register(
-	    "/libdata/firmware/if_iwn/iwlwifi-5000-2.ucode",
-	    FIRMWARE, RUMP_ETFS_REG) != 0)
-			err(1, "etfs");
 
 	/*
 	 * If ./wpa.conf exists, expose it to the rump kernel.
