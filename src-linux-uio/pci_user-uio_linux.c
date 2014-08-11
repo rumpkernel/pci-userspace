@@ -325,7 +325,7 @@ rumpcomp_pci_virt_to_mach(void *virt)
 	assert((pagesize & (pagesize-1)) == 0);
 
 	offset = (uintptr_t)virt & (pagesize-1);
-	voff = sizeof(pte) * ((uint64_t)virt / pagesize);
+	voff = sizeof(pte) * ((uint64_t)((uintptr_t)virt) / pagesize);
 
 	fd = open("/proc/self/pagemap", O_RDONLY);
 	if (fd == -1)
