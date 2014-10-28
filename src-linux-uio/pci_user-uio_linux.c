@@ -289,6 +289,13 @@ rumpcomp_pci_dmalloc(size_t size, size_t align,
 	return 0;
 }
 
+void
+rumpcomp_pci_free(unsigned long vap, size_t size)
+{
+	void *v = (void *) vap;
+	munmap(v, size);
+}
+
 /*
  * "maps" dma memory into virtual address space.  For now, we just
  * rely on it already being mapped.  This means that support for
