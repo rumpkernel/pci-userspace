@@ -102,7 +102,7 @@ openconf(unsigned dev, int mode)
 	int fd;
 
 	if (snprintf(path, sizeof(path),
-	    "/sys/class/uio/uio%d/device/config", dev) >= sizeof(path)) {
+	    "/sys/class/uio/uio%d/device/config",dev) >=(ssize_t)sizeof(path)) {
 		warn("impossibly long path?");
 		return -1;
 	}
@@ -264,7 +264,7 @@ int
 rumpcomp_pci_dmalloc(size_t size, size_t align,
 	unsigned long *pap, unsigned long *vap)
 {
-	const int pagesize = getpagesize();
+	const size_t pagesize = getpagesize();
 	void *v;
 	int mmapflags, sverr;
 
