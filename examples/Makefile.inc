@@ -14,6 +14,9 @@ LDADD+=	-lrumpdev_bpf
 # for /dev/bpf access
 LDADD+=	-lrumpvfs
 
+# remote syscalls
+LDADD+=	-lrumpkern_sysproxy
+
 # rump kernel core
 LDADD+=	-lrump
 
