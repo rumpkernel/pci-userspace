@@ -26,6 +26,7 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <sys/queue.h>
+#include <sys/io.h>
 
 #include <assert.h>
 #include <err.h>
@@ -44,6 +45,16 @@
 /* highest dev for which we've returned something sensible in config space */
 static pthread_mutex_t genericmtx = PTHREAD_MUTEX_INITIALIZER;
 static int highestdev = -1;
+
+int
+rumpcomp_pci_iospace_init(void)
+{
+
+	if (iopl(3) == -1)
+		return rumpuser_component_errtrans(errno);
+
+	return 0;
+}
 
 void *
 rumpcomp_pci_map(unsigned long addr, unsigned long len)
@@ -290,7 +301,7 @@ rumpcomp_pci_dmalloc(size_t size, size_t align,
 }
 
 void
-rumpcomp_pci_free(unsigned long vap, size_t size)
+rumpcomp_pci_dmafree(unsigned long vap, size_t size)
 {
 	void *v = (void *) vap;
 	munmap(v, size);
