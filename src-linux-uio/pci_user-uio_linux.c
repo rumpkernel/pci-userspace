@@ -187,6 +187,7 @@ intrthread(void *arg)
 	struct irq *irq = arg;
 	const unsigned device = irq->device;
 	int val;
+	int ret;
 
 	rumpuser_component_kthread();
 	for (;;) {
@@ -196,7 +197,10 @@ intrthread(void *arg)
 			val &= ~0x400;
 			rumpcomp_pci_confwrite(0, device, 0, 0x04, val);
 		}
-		if (read(irq->fd, &val, sizeof(val)) > 0) {
+		ret = read(irq->fd, &val, sizeof(val));
+		if (ret == -1) {
+			warn("read from UIO device %d", irq->device);
+		} else if (ret > 0) {
 			//printf("INTERRUPT!\n");
 			rumpuser_component_schedule(NULL);
 			irq->handler(irq->data);
