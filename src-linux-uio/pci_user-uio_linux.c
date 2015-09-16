@@ -45,13 +45,23 @@
 /* highest dev for which we've returned something sensible in config space */
 static pthread_mutex_t genericmtx = PTHREAD_MUTEX_INITIALIZER;
 static int highestdev = -1;
+static int selfmapfd = -1;
 
 int
 rumpcomp_pci_iospace_init(void)
 {
 
-	if (iopl(3) == -1)
-		return rumpuser_component_errtrans(errno);
+	assert(selfmapfd == -1);
+	selfmapfd = open("/proc/self/pagemap", O_RDONLY);
+	if (selfmapfd == -1)
+		return 0;
+
+	if (iopl(3) == -1) {
+		int error = rumpuser_component_errtrans(errno);
+
+		close(selfmapfd);
+		return error;
+	}
 
 	return 0;
 }
@@ -340,7 +350,6 @@ rumpcomp_pci_virt_to_mach(void *virt)
 	uint64_t voff, pte;
 	unsigned long paddr = 0;
 	int pagesize, offset;
-	int fd;
 
 	(void)*(volatile int *)virt;
 	pagesize = getpagesize();
@@ -349,17 +358,13 @@ rumpcomp_pci_virt_to_mach(void *virt)
 	offset = (uintptr_t)virt & (pagesize-1);
 	voff = sizeof(pte) * ((uint64_t)((uintptr_t)virt) / pagesize);
 
-	fd = open("/proc/self/pagemap", O_RDONLY);
-	if (fd == -1)
-		return 0;
-	if (pread(fd, &pte, sizeof(pte), voff) != sizeof(pte)) {
+	if (pread(selfmapfd, &pte, sizeof(pte), voff) != sizeof(pte)) {
 		warn("pread");
 		return 0;
 	}
 
 	/* paddr is lowest 55 bits, plus offset */
 	paddr = (pte & ((1ULL<<55)-1)) * pagesize + offset;
-	close(fd);
 
 	return paddr;
 }
