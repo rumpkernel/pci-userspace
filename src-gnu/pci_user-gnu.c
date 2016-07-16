@@ -52,6 +52,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 
 #include <rump/rumpuser_component.h>
 
@@ -63,6 +64,8 @@
 #include "pci_user.h"
 #include "experimental_U.h"
 #include <device/intr.h>
+#include "mach_debug_U.h"
+#include <mach/vm_param.h>
 
 #define RUMP_IRQ_PRIO		2
 
@@ -290,14 +293,6 @@ rumpcomp_pci_irq_establish(unsigned cookie, int (*handler)(void *), void *data)
 	return irq;
 }
 
-struct virt_to_mach {
-	unsigned long pa;
-	unsigned long va;
-
-        LIST_ENTRY(virt_to_mach) entries;
-};
-static LIST_HEAD(, virt_to_mach) virt_to_mach_list = LIST_HEAD_INITIALIZER(&virt_to_mach_list);
-
 /*
  * Allocate physically contiguous memory.  We could be slightly more
  * efficient here and implement an allocator on top of the
@@ -307,7 +302,6 @@ int
 rumpcomp_pci_dmalloc(size_t size, size_t align,
 	unsigned long *pap, unsigned long *vap)
 {
-	struct virt_to_mach *virt_to_mach;
 	const size_t pagesize = getpagesize();
 
 	if (align > pagesize) {
@@ -324,15 +318,6 @@ rumpcomp_pci_dmalloc(size_t size, size_t align,
 
 	assert(*pap);
 
-	virt_to_mach = malloc(sizeof(*virt_to_mach));
-	if (virt_to_mach == NULL)
-		return errno;
-
-	virt_to_mach->pa = *pap;
-	virt_to_mach->va = *vap;
-
-        LIST_INSERT_HEAD(&virt_to_mach_list, virt_to_mach, entries);
-
 	return 0;
 }
 
@@ -340,16 +325,8 @@ void
 rumpcomp_pci_dmafree(unsigned long vap, size_t size)
 {
 	void *v = (void *) vap;
-	struct virt_to_mach *virt_to_mach;
 
 	munmap(v, size);
-
-	LIST_FOREACH(virt_to_mach, &virt_to_mach_list, entries) {
-		if (virt_to_mach->va == (uintptr_t)vap) {
-			LIST_REMOVE(virt_to_mach, entries);
-			break;
-		}
-	}
 }
 
 /*
@@ -370,19 +347,55 @@ rumpcomp_pci_dmamem_map(struct rumpcomp_pci_dmaseg *dss, size_t nseg,
 	return 0;
 }
 
+/* number of memory pages info to preallocate when retrieving memory object mapping */
+#define NPAGES_OBJ_PRE 256
+
 /*
  * Finds the physical address for the given virtual address.
  */
 unsigned long
 rumpcomp_pci_virt_to_mach(void *virt)
 {
-	struct virt_to_mach *virt_to_mach;
+	unsigned long paddr=0;
+	kern_return_t ret;
+	vm_address_t vaddr = (vm_address_t)virt;
+	vm_region_info_t region;
+	mach_port_t tp, object;
 
-	/* FIXME: find a Mach API to do this properly, and drop the bookkeeping */
+	vm_page_info_t pages_array[NPAGES_OBJ_PRE];
+	vm_page_info_t *pages=pages_array;
+	mach_msg_type_number_t pagesCnt=NPAGES_OBJ_PRE;
 
-	LIST_FOREACH(virt_to_mach, &virt_to_mach_list, entries) {
-		if (virt_to_mach->va == (uintptr_t)virt)
-			return virt_to_mach->pa;
+	tp = mach_task_self();
+	ret = mach_vm_region_info(tp, vaddr, &region, &object);
+	if (KERN_SUCCESS != ret)
+		err(ret, "mach_vm_region_info");
+
+	memset(pages, 0, sizeof(*pages)*pagesCnt);
+	ret = mach_vm_object_pages(object, &pages, &pagesCnt);
+	if (KERN_SUCCESS != ret)
+		err(ret, "mach_vm_object_pages");
+
+	for (size_t i=0; (i<pagesCnt); i++){
+		vm_page_info_t *vpi;
+		vm_address_t vaddr_obj;
+
+		vpi = &pages[i];
+		vaddr_obj = (vaddr - region.vri_start) + region.vri_offset;
+		if ((vpi->vpi_phys_addr != 0) &&
+		    (vpi->vpi_offset <= vaddr_obj) &&
+		    (vaddr_obj < (vpi->vpi_offset + PAGE_SIZE))){
+			paddr = vpi->vpi_phys_addr + (vaddr_obj - vpi->vpi_offset);
+
+			/* Found a match, don't scan remaining pages */
+			break;
+		}
 	}
-	return 0;
+
+	if (paddr == 0){
+		warn("rumpcomp_pci_virt_to_mach");
+		printf("Cannot find a physical address for vaddr %p, returning 0\n", virt);
+	}
+
+	return paddr;
 }
