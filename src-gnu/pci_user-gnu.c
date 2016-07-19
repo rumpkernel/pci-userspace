@@ -347,9 +347,6 @@ rumpcomp_pci_dmamem_map(struct rumpcomp_pci_dmaseg *dss, size_t nseg,
 	return 0;
 }
 
-/* number of memory pages info to preallocate when retrieving memory object mapping */
-#define NPAGES_OBJ_PRE 256
-
 /*
  * Finds the physical address for the given virtual address.
  */
@@ -361,17 +358,14 @@ rumpcomp_pci_virt_to_mach(void *virt)
 	vm_address_t vaddr = (vm_address_t)virt;
 	vm_region_info_t region;
 	mach_port_t tp, object;
-
-	vm_page_info_t pages_array[NPAGES_OBJ_PRE];
-	vm_page_info_t *pages=pages_array;
-	mach_msg_type_number_t pagesCnt=NPAGES_OBJ_PRE;
+	vm_page_info_array_t pages;
+	mach_msg_type_number_t pagesCnt=0;
 
 	tp = mach_task_self();
 	ret = mach_vm_region_info(tp, vaddr, &region, &object);
 	if (KERN_SUCCESS != ret)
 		err(ret, "mach_vm_region_info");
 
-	memset(pages, 0, sizeof(*pages)*pagesCnt);
 	ret = mach_vm_object_pages(object, &pages, &pagesCnt);
 	if (KERN_SUCCESS != ret)
 		err(ret, "mach_vm_object_pages");
@@ -391,6 +385,9 @@ rumpcomp_pci_virt_to_mach(void *virt)
 			break;
 		}
 	}
+	ret = vm_deallocate(tp, (vm_address_t)pages, pagesCnt*sizeof(*pages));
+	if (KERN_SUCCESS != ret)
+		err(ret, "vm_deallocate");
 
 	if (paddr == 0){
 		warn("rumpcomp_pci_virt_to_mach");
