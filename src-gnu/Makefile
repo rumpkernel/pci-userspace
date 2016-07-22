@@ -1,6 +1,6 @@
 RUMPTOP= ${TOPRUMP}
 
-RUMPCOMP_USER_SRCS.rumpdev_pci=		pci_user-gnu.c experimentalUser.c
+RUMPCOMP_USER_SRCS.rumpdev_pci=		pci_user-gnu.c experimentalUser.c mach_debugUser.c
 RUMPCOMP_USER_PATH.rumpdev_pci:=	${.PARSEDIR}
 RUMPCOMP_USER_CPPFLAGS.rumpdev_pci:=	-I${.PARSEDIR}
 RUMPCOMP_CPPFLAGS.rumpdev_pci:=		-I${.PARSEDIR}
