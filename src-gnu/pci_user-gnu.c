@@ -2,6 +2,7 @@
  * Copyright (c) 2014 Antti Kantee.  All Rights Reserved.
  * Copyright (c) 2015 Robert Millan
  * Copyright (c) 2009,2010 Zheng Da
+ * Copyright (c) 2019 Damien Zammit
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,6 +50,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <pthread.h>
+#include <semaphore.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -66,20 +68,48 @@
 #include <device/intr.h>
 #include "mach_debug_U.h"
 #include <mach/vm_param.h>
+#include <mach.h>
 
 #define RUMP_IRQ_PRIO		2
 
-/* highest dev for which we've returned something sensible in config space */
+#define PCI_COMMAND		0x04
+#define PCI_COMMAND_INT_DISABLE	0x400
+
+#if 0
+#define MACH_PRINT(x)		mach_print(x)
+#else
+#define MACH_PRINT(x)
+#endif
+
+/* generic mutex for avoiding irq collisions */
 static pthread_mutex_t genericmtx = PTHREAD_MUTEX_INITIALIZER;
-static int highestdev = -1;
+
+/* number of pci devices */
+static int numdevs = -1;
 
 static mach_port_t master_host;
 static mach_port_t master_device;
 
+#define PCI_CFG1_START 0xcf8
+#define PCI_CFG1_END   0xcff
+#define PCI_CFG2_START 0xc000
+#define PCI_CFG2_END   0xcfff
+
 int
 rumpcomp_pci_iospace_init(void)
 {
-	if (ioperm(0, 0x10000, 1))
+	/* Avoid giving ioperm to the PCI cfg registers
+	 * since GNU/Hurd controls these
+	 */
+
+	/* 0-0xcf7 */
+	if (ioperm(0, PCI_CFG1_START, 1))
+		return rumpuser_component_errtrans(errno);
+	/* 0xd00-0xbfff */
+	if (ioperm(PCI_CFG1_END+1, PCI_CFG2_START - (PCI_CFG1_END+1), 1))
+		return rumpuser_component_errtrans(errno);
+	/* 0xd000-0xffff */
+	if (ioperm(PCI_CFG2_END+1, 0x10000 - (PCI_CFG2_END+1), 1))
 		return rumpuser_component_errtrans(errno);
 
 	return 0;
@@ -95,7 +125,8 @@ pci_userspace_init(void)
 	static int is_init = 0;
 	if (is_init)
 		return;
-	is_init = 1;
+
+	MACH_PRINT("pci_userspace_init\n");
 
 	if (get_privileged_ports (&master_host, &master_device))
 		err(1, "get_privileged_ports");
@@ -103,40 +134,67 @@ pci_userspace_init(void)
 	pci_system_init ();
 	struct pci_device_iterator *dev_iter;
 	struct pci_device *pci_dev;
-        dev_iter = pci_slot_match_iterator_create (NULL);
+	dev_iter = pci_slot_match_iterator_create (NULL);
 	int i = 0;
-        while ((pci_dev = pci_device_next (dev_iter)) != NULL) {
+	while (((pci_dev = pci_device_next (dev_iter)) != NULL)
+			&& (i < NUMDEVS)) {
 		pci_devices[i++] = pci_dev;
 	}
+	numdevs = i;
+	is_init = 1;
 }
 
 void *
 rumpcomp_pci_map(unsigned long addr, unsigned long len)
 {
-	errno = rumpuser_component_errtrans(ENOSYS);
+	void *ret = NULL;
+	int residx;
+	int i;
+	uintptr_t address = (uintptr_t)addr;
+
+	pci_userspace_init();
+
+	/*
+	 * We search the pciaccess memory structure for the address
+	 */
+	for (i = 0; i < numdevs; i++) {
+		for (residx = 0; residx < 6; residx++) {
+			if (pci_devices[i]->regions[residx].size == 0)
+				continue;
+			if ((uintptr_t)pci_devices[i]->regions[residx].base_addr == address)
+				goto found;
+		}
+	}
 	return NULL;
+
+found:
+
+	pci_device_map_range(pci_devices[i], addr, len, 1, &ret);
+	return pci_devices[i]->regions[residx].memory;
 }
 
 int
 rumpcomp_pci_confread(unsigned bus, unsigned dev, unsigned fun,
 	int reg, unsigned int *rv)
 {
+	int i;
 	*rv = 0xffffffff;
-	if (fun != 0 || bus != 0)
-		return 1;
-
-	if (dev >= NUMDEVS)
-		return 1;
 
 	pci_userspace_init();
 
-	pci_device_cfg_read_u32(pci_devices[dev], rv, reg);
 
-	pthread_mutex_lock(&genericmtx);
-	if ((int)dev > highestdev)
-		highestdev = dev;
-	pthread_mutex_unlock(&genericmtx);
+	for (i = 0; i < numdevs; i++) {
+		if ((pci_devices[i]->bus == bus) &&
+		    (pci_devices[i]->dev == dev) &&
+		    (pci_devices[i]->func == fun)) {
+			goto found;
 
+		}
+	}
+	return 1;
+
+found:
+	pci_device_cfg_read_u32(pci_devices[i], rv, reg);
 	return 0;
 }
 
@@ -144,26 +202,35 @@ int
 rumpcomp_pci_confwrite(unsigned bus, unsigned dev, unsigned fun,
 	int reg, unsigned int v)
 {
-	assert(bus == 0 && fun == 0);
-
-	if (dev >= NUMDEVS)
-		return 1;
+	int i;
 
 	pci_userspace_init();
 
-	pci_device_cfg_write_u32(pci_devices[dev], v, reg);
+	for (i = 0; i < numdevs; i++) {
+		if ((pci_devices[i]->bus == bus) &&
+		    (pci_devices[i]->dev == dev) &&
+		    (pci_devices[i]->func == fun)) {
+			goto found;
+		}
+	}
+	return 1;
 
+found:
+	pci_device_cfg_write_u32(pci_devices[i], v, reg);
 	return 0;
 }
 
 /* this is a multifunction data structure! */
 struct irq {
 	unsigned magic_cookie;
-	unsigned device;
+	unsigned bus;
+	unsigned dev;
+	unsigned fun;
 
 	int (*handler)(void *);
 	void *data;
 	int intrline;
+	sem_t sema;
 
 	LIST_ENTRY(irq) entries;
 };
@@ -176,87 +243,106 @@ intrthread(void *arg)
 	mach_port_t delivery_port;
         mach_port_t pset, psetcntl;
 	int ret;
-	int val;
+	uint32_t val;
+
+	MACH_PRINT("intrthread\n");
 
 	rumpuser_component_kthread();
 
 	ret = mach_port_allocate (mach_task_self (), MACH_PORT_RIGHT_RECEIVE,
 				&delivery_port);
-	if (ret)
-		err(ret, "mach_port_allocate");
-
+	if (ret) {
+		MACH_PRINT("mach_port_allocate\n");
+		return 0;
+	}
 	ret = thread_get_assignment (mach_thread_self (), &pset);
-	if (ret)
-		err(ret, "thread_get_assignment");
-
+	if (ret) {
+		MACH_PRINT("thread_get_assignment\n");
+		return 0;
+	}
 	ret = host_processor_set_priv (master_host, pset, &psetcntl);
-	if (ret)
-		err(ret, "host_processor_set_priv");
-
+	if (ret) {
+		MACH_PRINT("host_processor_set_priv\n");
+		return 0;
+	}
 	thread_max_priority (mach_thread_self (), psetcntl, 0);
 	ret = thread_priority (mach_thread_self (), RUMP_IRQ_PRIO, 0);
-	if (ret)
-		err(ret, "thread_priority");
-
+	if (ret) {
+		MACH_PRINT("thread_priority\n");
+		return 0;
+	}
 	ret = device_intr_register(master_device, irq->intrline,
 					0, 0x04000000, delivery_port,
 					MACH_MSG_TYPE_MAKE_SEND);
 	if (ret) {
-		warn("device_intr_register");
+		MACH_PRINT("device_intr_register");
 		return 0;
 	}
 
-	device_intr_enable (master_device, irq->intrline, TRUE);
+	int irq_server (mach_msg_header_t *inp, mach_msg_header_t *outp) {
+		char interrupt[4];
 
-        int irq_server (mach_msg_header_t *inp, mach_msg_header_t *outp) {
-                mach_intr_notification_t *intr_header = (mach_intr_notification_t *) inp;
+		mach_intr_notification_t *n = (mach_intr_notification_t *) inp;
 
-                ((mig_reply_header_t *) outp)->RetCode = MIG_NO_REPLY;
-                if (inp->msgh_id != MACH_INTR_NOTIFY)
-                        return 0;
-
-                /* It's an interrupt not for us. It shouldn't happen. */
-                if (intr_header->line != irq->intrline) {
-                        printf ("We get interrupt %d, %d is expected",
-                                       intr_header->line, irq->intrline);
-                        return 1;
-                }
-
-		rumpcomp_pci_confread(0, irq->device, 0, 0x04, &val);
-		if (val & 0x400) {
-			printf("interrupt disabled!\n");
-			val &= ~0x400;
-			rumpcomp_pci_confwrite(0, irq->device, 0, 0x04, val);
+		((mig_reply_header_t *) outp)->RetCode = MIG_NO_REPLY;
+		if (n->intr_header.msgh_id != MACH_INTR_NOTIFY) {
+			MACH_PRINT("not an interrupt\n");
+			return 0;
 		}
 
+		/* It's an interrupt not for us. It shouldn't happen. */
+		if (n->line != irq->intrline) {
+			MACH_PRINT("interrupt not for us\n");
+			return 0;
+		}
+
+		sprintf(interrupt, "%d\n", n->line);
+		MACH_PRINT("irq fired: ");
+		MACH_PRINT(interrupt);
+
+		rumpcomp_pci_confread(irq->bus, irq->dev, irq->fun, PCI_COMMAND, &val);
+		if (val & PCI_COMMAND_INT_DISABLE) {
+			MACH_PRINT("interrupt disabled!\n");
+			val &= ~PCI_COMMAND_INT_DISABLE;
+			rumpcomp_pci_confwrite(irq->bus, irq->dev, irq->fun, PCI_COMMAND, val);
+		}
+
+		MACH_PRINT("k_handle...");
 		rumpuser_component_schedule(NULL);
 		irq->handler(irq->data);
 		rumpuser_component_unschedule();
+		MACH_PRINT("k_done\n");
 
-                /* If the irq has been disabled by the linux device,
-                 * we don't need to reenable the real one. */
-                device_intr_enable (master_device, irq->intrline, TRUE);
+		device_intr_enable (master_device, irq->intrline, TRUE);
 
-                return 1;
+		return 1;
         }
 
-        mach_msg_server (irq_server, 0, delivery_port);
+	device_intr_enable (master_device, irq->intrline, TRUE);
 
+	sem_post(&irq->sema);
+	MACH_PRINT("done init\n");
+
+	/* Server loop */
+	mach_msg_server (irq_server, 0, delivery_port);
+
+	rumpuser_component_kthread_release();
 	return NULL;
 }
 
 int
-rumpcomp_pci_irq_map(unsigned bus, unsigned device, unsigned fun,
+rumpcomp_pci_irq_map(unsigned bus, unsigned dev, unsigned fun,
 	int intrline, unsigned cookie)
 {
 	struct irq *irq;
-
 	irq = malloc(sizeof(*irq));
 	if (irq == NULL)
 		return ENOENT;
 
 	irq->magic_cookie = cookie;
-	irq->device = device;
+	irq->bus = bus;
+	irq->dev = dev;
+	irq->fun = fun;
 	irq->intrline = intrline;
 
 	pthread_mutex_lock(&genericmtx);
@@ -270,7 +356,12 @@ void *
 rumpcomp_pci_irq_establish(unsigned cookie, int (*handler)(void *), void *data)
 {
 	struct irq *irq;
+	void *cookie2;
 	pthread_t pt;
+
+	cookie2 = rumpuser_component_unschedule();
+
+	MACH_PRINT("rumpcomp_pci_irq_establish\n");
 
 	pthread_mutex_lock(&genericmtx);
 	LIST_FOREACH(irq, &irqs, entries) {
@@ -284,12 +375,20 @@ rumpcomp_pci_irq_establish(unsigned cookie, int (*handler)(void *), void *data)
 	irq->handler = handler;
 	irq->data = data;
 
+	sem_init(&irq->sema, 0, 0);
+
 	if (pthread_create(&pt, NULL, intrthread, irq) != 0) {
-		warn("interrupt thread create");
+		MACH_PRINT("interrupt thread create");
 		free(irq);
+		rumpuser_component_schedule(cookie2);
 		return NULL;
 	}
 
+	sem_wait(&irq->sema);
+
+	MACH_PRINT("returning from establish\n");
+
+	rumpuser_component_schedule(cookie2);
 	return irq;
 }
 

@@ -1,4 +1,4 @@
-LDFLAGS += -lpciaccess
+LDFLAGS += -Wl,--no-as-needed -lpciaccess -Wl,--as-needed
 
 experimentalUser.c:
 	echo '#include <mach/experimental.defs>' \
