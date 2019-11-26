@@ -1,0 +1,9 @@
+# make defs for linux PCI component
+
+PCIDIR:=	${.PARSEDIR}
+.PATH:		${PCIDIR}
+
+RUMPCOMP_USER_SRCS=	pci_user-uio_linux.c
+RUMPCOMP_USER_CPPFLAGS+=-I${PCIDIR}
+RUMPCOMP_CPPFLAGS+=	-I${PCIDIR}
+CPPFLAGS+=		-I${PCIDIR}

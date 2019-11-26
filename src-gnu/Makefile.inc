@@ -1,4 +1,13 @@
-LDFLAGS += -Wl,--no-as-needed -lpciaccess -Wl,--as-needed
+# make defs for gnu PCI component
+
+PCIDIR:=	${.PARSEDIR}
+.PATH:		${PCIDIR}
+
+RUMPCOMP_USER_SRCS=	pci_user-gnu.c experimentalUser.c mach_debugUser.c
+RUMPCOMP_USER_CPPFLAGS+=-I${PCIDIR}
+RUMPCOMP_CPPFLAGS+=	-I${PCIDIR}
+CPPFLAGS+=		-I${PCIDIR}
+LDFLAGS+= -Wl,--no-as-needed -lpciaccess -Wl,--as-needed
 
 experimentalUser.c:
 	echo '#include <mach/experimental.defs>' \
