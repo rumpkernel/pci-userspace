@@ -2,6 +2,11 @@ language: c
 
 sudo: false
 
+addons:
+  apt:
+    packages:
+      - libpciaccess-dev
+
 script:
   - git submodule update --init
   - ./buildrump.sh/buildrump.sh -T rumptools -s rumpsrc -V NOSTATICLIB=1 -qq -j16 checkout fullbuild
